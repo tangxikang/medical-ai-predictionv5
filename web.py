@@ -17,10 +17,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from ml_project.cleaning import clean_dataset
 from ml_project.web_support import FeatureSpec, infer_feature_specs, resolve_latest_model_artifacts
 
 
-st.set_page_config(page_title="Medical AI Prediction", layout="wide", page_icon="🩺")
+st.set_page_config(page_title="Medical AI Prediction", layout="wide", page_icon="馃┖")
 
 st.markdown(
     """
@@ -97,16 +98,17 @@ def _load_model(model_path: str):
 
 
 @st.cache_data(show_spinner=False)
-def _load_data(data_path: str) -> pd.DataFrame:
+def _load_data(data_path: str, file_mtime_ns: int) -> pd.DataFrame:
     path = Path(data_path)
     if not path.exists():
         raise FileNotFoundError(f"Data file not found: {path}")
-    return pd.read_excel(path)
+    df = pd.read_excel(path)
+    return clean_dataset(df)
 
 
 @st.cache_data(show_spinner=False)
-def _get_feature_specs(data_path: str, features: tuple[str, ...]) -> list[FeatureSpec]:
-    df = _load_data(data_path)
+def _get_feature_specs(data_path: str, features: tuple[str, ...], file_mtime_ns: int) -> list[FeatureSpec]:
+    df = _load_data(data_path, file_mtime_ns)
     return infer_feature_specs(df=df, feature_cols=list(features))
 
 
@@ -116,22 +118,35 @@ def _render_inputs(specs: list[FeatureSpec]) -> pd.DataFrame:
     for i, spec in enumerate(specs):
         col = cols[i % 3]
         with col:
+            # Truncate long names for display; show full name on hover via HTML title
+            display_name = spec.name if len(spec.name) <= 25 else spec.name[:22] + "..."
+            st.markdown(
+                f'<span title="{spec.name}" style="font-size:14px; font-weight:600; cursor:help; display:block; margin-bottom:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{display_name}</span>',
+                unsafe_allow_html=True,
+            )
             if spec.kind == "categorical":
                 choices = spec.choices or [spec.default_value]
                 default_idx = choices.index(spec.default_value) if spec.default_value in choices else 0
-                row[spec.name] = st.selectbox(spec.name, choices, index=default_idx, key=f"input_{spec.name}")
+                row[spec.name] = st.selectbox(
+                    "",
+                    choices,
+                    index=default_idx,
+                    key=f"input_{spec.name}",
+                    label_visibility="collapsed",
+                )
             else:
                 min_v = float(spec.min_value if spec.min_value is not None else 0.0)
                 max_v = float(spec.max_value if spec.max_value is not None else 1.0)
                 default_v = float(spec.default_value if spec.default_value is not None else min_v)
                 step = max((max_v - min_v) / 200.0, 0.01)
                 row[spec.name] = st.number_input(
-                    spec.name,
+                    "",
                     min_value=min_v,
                     max_value=max_v,
                     value=default_v,
                     step=step,
                     key=f"input_{spec.name}",
+                    label_visibility="collapsed",
                 )
     return pd.DataFrame([row])
 
@@ -167,15 +182,18 @@ def _build_force_plot_html(
     return f"<head>{shap.getjs()}</head><body>{force_html}</body>"
 
 
-st.title("🩺 Medical AI Prediction Web")
+st.title("Medical AI Prediction Web")
 
-artifacts = resolve_latest_model_artifacts(base_dir=ROOT)
-data_path = "data.xlsx"
+artifact_extra_dirs = [ROOT.parent] if ROOT.parent != ROOT else []
+artifacts = resolve_latest_model_artifacts(base_dir=ROOT, extra_base_dirs=artifact_extra_dirs)
+data_candidates = [ROOT / "新版本数据.xlsx", ROOT.parent / "新版本数据.xlsx"]
+data_path = next((p for p in data_candidates if p.exists()), data_candidates[0])
 
 try:
     pipeline = _load_model(str(artifacts.model_path))
-    data_df = _load_data(data_path)
-    specs = _get_feature_specs(data_path, tuple(artifacts.selected_features))
+    data_mtime_ns = data_path.stat().st_mtime_ns
+    data_df = _load_data(str(data_path), data_mtime_ns)
+    specs = _get_feature_specs(str(data_path), tuple(artifacts.selected_features), data_mtime_ns)
 except Exception as exc:
     st.error(f"加载失败: {exc}")
     st.stop()
@@ -187,7 +205,7 @@ if st.button("开始预测", type="primary", use_container_width=True):
     threshold = artifacts.best_threshold if artifacts.best_threshold is not None else 0.5
     pred = int(proba >= float(threshold))
     st.metric("预测概率(正类)", f"{proba:.2%}")
-    st.metric("分类结果", f"{pred} (阈值={threshold:.3f})")
+    st.metric("分类结果", f"{pred} (阈值 {threshold:.3f})")
 
     st.markdown("---")
     st.subheader("SHAP Force Plot")
