@@ -186,7 +186,12 @@ st.title("Medical AI Prediction Web")
 
 artifact_extra_dirs = [ROOT.parent] if ROOT.parent != ROOT else []
 artifacts = resolve_latest_model_artifacts(base_dir=ROOT, extra_base_dirs=artifact_extra_dirs)
-data_candidates = [ROOT / "新版本数据.xlsx", ROOT.parent / "新版本数据.xlsx"]
+data_candidates = [
+    ROOT / "data.xlsx",
+    ROOT / "新版本数据.xlsx",
+    ROOT.parent / "data.xlsx",
+    ROOT.parent / "新版本数据.xlsx",
+]
 data_path = next((p for p in data_candidates if p.exists()), data_candidates[0])
 
 try:
@@ -224,3 +229,4 @@ if st.button("开始预测", type="primary", use_container_width=True):
         tmp_path.unlink(missing_ok=True)
     except Exception as exc:
         st.warning(f"SHAP 图生成失败: {exc}")
+
